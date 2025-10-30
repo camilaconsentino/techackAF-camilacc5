@@ -1,0 +1,8 @@
+url,label
+https://www.google.com,legit
+https://www.paypal.com,legit
+http://93.184.216.34/suspicious,maybe
+http://xn--ppal-5ve.com/login,phish
+https://accounts-google.com/signin,phish
+http://short.link/redirect,maybe
+https://expired.badssl.com/,phish

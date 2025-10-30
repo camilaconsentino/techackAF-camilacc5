@@ -1,0 +1,9 @@
+streamlit==1.26.0
+requests==2.31.0
+python-whois==0.7.3
+dnspython==2.4.2
+tldextract==3.4.0
+beautifulsoup4==4.12.2
+fuzzywuzzy==0.18.0
+validators==0.20.0
+pandas==2.2.2
