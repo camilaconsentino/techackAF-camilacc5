@@ -1,10 +1,11 @@
-# src/db.py
+# src/db.py (parte superior)
+from pathlib import Path
 import sqlite3
 import json
 from datetime import datetime
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "phish_detector.db"
+# FORÇAR uso do DB no diretório de trabalho atual (onde você executa o app)
+DB_PATH = (Path.cwd() / "phish_detector.db").resolve()
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)

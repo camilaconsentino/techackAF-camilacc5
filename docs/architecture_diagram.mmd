@@ -1,0 +1,14 @@
+```mermaid
+flowchart LR
+  subgraph Client
+    UI[UI Web (Streamlit)]
+  end
+
+  UI -->|URL| Analyzer[Analyzer (Python)]
+  Analyzer --> Heur[Heurísticas de URL]
+  Analyzer --> WHOIS[WHOIS / DNS]
+  Analyzer --> SSL[SSL/TLS]
+  Analyzer --> GSB[Google Safe Browsing (opcional)]
+  Analyzer --> DB[(SQLite: checks)]
+
+  UI <-->|Histórico / Export| DB
