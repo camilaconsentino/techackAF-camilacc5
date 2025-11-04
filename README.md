@@ -1,5 +1,7 @@
 # techackAI-camilacc5
 
+# ver relatorio dentro da pasta docs `report.md`
+
 ### PARA RODAR APLICACAO NO DOCKER
 build: `docker build -t phish-detector .`
 
