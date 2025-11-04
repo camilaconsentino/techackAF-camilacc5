@@ -1,4 +1,6 @@
 # src/analyzer.py
+import os
+import requests
 import re
 import socket
 import ssl
@@ -133,15 +135,20 @@ def check_blacklists(url, gsb_api_key=None):
 
 # ---------------- Main analyze ----------------
 def analyze_url(url, gsb_api_key=None):
+    import os, datetime
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
     domain = normalize_domain(hostname)
     features = {}
 
-    # 1) heurísticas da URL
+    # 0) pega a chave do GSB se não vier por parâmetro
+    if not gsb_api_key:
+        gsb_api_key = os.getenv("GOOGLE_SAFE_KEY")
+
+    # 1) Heurísticas da URL
     features.update(url_heuristics(url))
 
-    # 2) redirects / status
+    # 2) Redirects / status
     redirects, status_code, elapsed = fetch_redirects(url)
     features["redirect_chain_len"] = len(redirects)
     features["final_status"] = status_code
@@ -154,22 +161,23 @@ def analyze_url(url, gsb_api_key=None):
     features["ssl_issuer"] = ssl_info["issuer"]
     features["ssl_hostname_match"] = ssl_info["hostname_match"]
 
-    # 4) whois age
+    # 4) WHOIS (idade do domínio)
     age_days = whois_age_days(domain)
     features["domain_age_days"] = age_days
 
-    # 5) similarity to known brands
+    # 5) Similaridade com marcas
     sim = similarity_to_known_brands(domain)
     features["closest_brand"] = sim["brand"]
     features["closest_brand_score"] = sim["score"]
 
-    # 6) blacklists
+    # 6) Blacklists (Google Safe Browsing opcional)
     bl = check_blacklists(url, gsb_api_key)
     features.update(bl)
 
-    # 7) final score rule-based (0-100) - simples: soma com pesos
-    score = 100  # baseline, neutro
-    # penalidades
+    # 7) SCORE (sempre inicializar!)
+    score = 100  # baseline neutro
+
+    # Penalidades de estrutura
     if features.get("has_ip"):
         score -= 15
     if features.get("has_at_symbol"):
@@ -178,26 +186,26 @@ def analyze_url(url, gsb_api_key=None):
         score -= 12
     if features.get("suspicious_tld"):
         score -= 8
-    if features.get("length",0) > 100:
+    if features.get("length", 0) > 100:
         score -= 8
-    if features.get("num_subdomains",0) > 3:
+    if features.get("num_subdomains", 0) > 3:
         score -= 6
-    if features.get("redirect_chain_len",0) > 3:
+    if features.get("redirect_chain_len", 0) > 3:
         score -= 6
-    # whois: domínio novo (< 30 dias) => penalidade
+
+    # WHOIS
     if age_days is not None:
         if age_days < 30:
             score -= 15
         elif age_days < 365:
             score -= 6
     else:
-        # desconhecido -> leve penalidade
-        score -= 5
-    # ssl
+        score -= 5  # idade desconhecida -> penalidade leve
+
+    # SSL
     if not features.get("ssl_has_cert"):
         score -= 12
     else:
-        # certificado expirando proximamente
         try:
             vuntil = features.get("ssl_valid_until")
             if vuntil:
@@ -209,23 +217,21 @@ def analyze_url(url, gsb_api_key=None):
                     score -= 6
         except Exception:
             pass
-    # brand similarity: alto score com marca conhecida -> penalidade
-    if features.get("closest_brand_score",0) >= 80 and normalize_domain(domain) != normalize_domain(features.get("closest_brand","")):
+
+    # Similaridade com marca
+    if features.get("closest_brand_score", 0) >= 80 and normalize_domain(domain) != normalize_domain(features.get("closest_brand", "")):
         score -= 20
-    elif features.get("closest_brand_score",0) >= 60:
+    elif features.get("closest_brand_score", 0) >= 60:
         score -= 8
 
-    # blacklists override
+    # Override por Google Safe Browsing
     if features.get("google_safe") is True:
-        score = 0
-    if features.get("google_safe") is False:
-        # nothing
-        pass
+        score = 0  # malicioso confirmado pelo GSB
 
-    # clamp 0-100
+    # Clamp 0..100 e veredito
     score = max(0, min(100, score))
     features["score"] = score
-    # tag
+
     if score < 30:
         features["verdict"] = "Malicioso"
     elif score < 70:
@@ -233,4 +239,37 @@ def analyze_url(url, gsb_api_key=None):
     else:
         features["verdict"] = "Seguro"
 
+    # Razões para a UI
+    reasons = []
+    if features.get("google_safe") is True:
+        reasons.append("⚠️ Identificado como malicioso pelo Google Safe Browsing.")
+    elif features.get("google_safe") is False:
+        reasons.append("✅ URL não consta na base do Google Safe Browsing.")
+    elif features.get("google_safe") is None:
+        reasons.append("ℹ️ Google Safe Browsing não consultado (sem API Key configurada).")
+
+    if features.get("has_ip"):
+        reasons.append("O endereço usa um IP em vez de um domínio (comum em sites falsos).")
+    if features.get("has_at_symbol"):
+        reasons.append("A URL contém '@', técnica usada para mascarar o domínio real.")
+    if features.get("punycode"):
+        reasons.append("O domínio usa caracteres punycode (ex: xn--), comum em typosquatting.")
+    if features.get("suspicious_tld"):
+        reasons.append("O domínio usa uma TLD suspeita (.zip, .xyz, .tk, etc.).")
+    if features.get("num_subdomains", 0) > 3:
+        reasons.append("Há muitos subdomínios, típico em links falsos de login.")
+    if features.get("length", 0) > 100:
+        reasons.append("A URL é muito longa, o que pode indicar tentativa de disfarce.")
+    if age_days is not None and age_days < 30:
+        reasons.append("O domínio foi criado há menos de 30 dias (recente demais).")
+    if not features.get("ssl_has_cert"):
+        reasons.append("O site não possui certificado SSL válido (sem HTTPS).")
+    if features.get("redirect_chain_len", 0) > 3:
+        reasons.append("A página faz muitos redirecionamentos, comportamento suspeito.")
+    if features.get("closest_brand_score", 0) >= 80:
+        reasons.append(f"O domínio é muito parecido com {features.get('closest_brand')} (possível imitação).")
+    if age_days is None:
+        reasons.append("Não foi possível obter a idade do domínio via WHOIS; penalidade leve por precaução.")
+
+    features["reasons"] = reasons
     return features
